@@ -59,7 +59,7 @@ constexpr auto make_contiguous_array() noexcept;
 
 // Conveniant alias to have a class holding a continuous array.
 template <auto First, auto Last>
-struct continuous_array_t {
+struct contiguous_array_t {
     static constexpr auto value = make_contiguous_array<First, Last>();
 };
 
@@ -182,7 +182,7 @@ constexpr auto make_contiguous_array() noexcept {
     constexpr auto i_last  = static_cast<int_t>(Last);
     static_assert(i_first <= i_last);
 
-    using sequence_type = std::make_index_sequence<i_last - i_first>;
+    using sequence_type = std::make_index_sequence<1 + i_last - i_first>;
     return detail::make_contiguous_array<value_type, i_first>(sequence_type{});
 }
 
@@ -292,7 +292,7 @@ struct binary_search_strategy {};
 
 template <class T, class F>
 decltype(auto) dispatch(T&& value, F&& f) {
-    using set_type = finite_set<T>;
+    using set_type = finite_set<detail::remove_cvref_t<T>>;
     static_assert(is_finite_set_v<set_type>);
 
     using strategy_type = default_strategy_t<set_type>;
@@ -312,8 +312,8 @@ namespace detail {
 
     template <class Variant, class F>
     decltype(auto) dispatch_variant(Variant&& v, F&& f) {
-        using variant_type  = remove_cvref_t<Variant>;
-        using set_type      = continuous_array_t<size_t{0}, std::variant_size_v<variant_type>>;
+        using variant_type  = std::remove_reference_t<Variant>;
+        using set_type      = contiguous_array_t<size_t{0}, std::variant_size_v<variant_type> - 1>;
         using strategy_type = default_strategy_t<set_type>;
 
         return strategy_type{}(v.index(), [&] (auto tag) {
@@ -455,18 +455,3 @@ DYD_MAKE_SWITCH_1(7);
 DYD_MAKE_SWITCH_1(8);
 DYD_MAKE_SWITCH_1(9);
 DYD_MAKE_SWITCH_2(1,0);
-
-auto get_size(std::variant<int, float, std::string>& v) {
-    return dyd::dispatch(v, [] (auto&& value) {
-        return sizeof(value);
-    });
-}
-
-
-
-
-
-
-
-
-
