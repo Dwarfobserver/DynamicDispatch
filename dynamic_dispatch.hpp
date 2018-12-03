@@ -2,8 +2,6 @@
 // Implements optimized dynamic dispatch where the possible states are known
 // at compile-time (like for std::variant).
 
-#pragma once
-
 #include <array>
 #include <utility>
 #include <variant>
@@ -20,7 +18,7 @@ namespace dyd {
 // 'dispatch(value, f)' will call 'f(tag)', where decltype(tag)::value is the
 // value available at compile-time.
 template <class T, class F>
-decltype(auto) dispatch(T&& value, F && f);
+decltype(auto) dispatch(T && value, F && f);
 
 // The dispatch on variants are equivalents to a more optimized 'std::visit'.
 // It does not handle the state 'valueness_by_exception'.
@@ -45,19 +43,25 @@ struct finite_set<bool> {
 };
 
 // Indicates if a class holds a finite set of values (like for 'T = finite_set<bool>').
-template <class T, class SFINAE = void>
-constexpr bool is_finite_set_v = false;
+template <class T>
+struct is_finite_set;
+
+template <class T>
+constexpr bool is_finite_set_v = is_finite_set<T>::value;
 
 // Indicates if a class holds a finite set of values represented as contiguous
 // integral values.
-template <class T, class SFINAE = void>
-constexpr bool is_contiguous_finite_set_v = false;
+template <class T>
+struct is_contiguous_finite_set;
+
+template <class T>
+constexpr bool is_contiguous_finite_set_v = is_contiguous_finite_set<T>::value;
 
 // Creates an std::array with all values between 'First' and 'Last'.
 template <auto First, auto Last>
 constexpr auto make_contiguous_array() noexcept;
 
-// Conveniant alias to have a class holding a continuous array.
+// Conveniant alias to have a class holding a contiguous array.
 template <auto First, auto Last>
 struct contiguous_array_t {
     static constexpr auto value = make_contiguous_array<First, Last>();
@@ -78,6 +82,14 @@ struct contiguous_array_t {
 // | };
 template <class FiniteSet>
 struct switch_strategy;
+
+// Generates a switch that handle the given number (until 999) of
+// values in the finite set the possible values.
+// Digits are separated by commas.
+// Must be used in the global namespace.
+// Exemple : DYD_MAKE_SWITCH(4, 2) generates a switch for sets of
+// 42 values.
+#define DYD_MAKE_SWITCH(...)
 
 // O(1) algorithm. Prevents inlining on most compilers.
 // Expands to :
@@ -117,19 +129,10 @@ constexpr bool is_available_strategy_v = true;
 // finite sets. Else, use the binary search strategy for huge sets and the sequential search
 // for little sets.
 template <class FiniteSet>
-using default_strategy_t = std::conditional_t<
-    is_available_strategy_v<switch_strategy<FiniteSet>>,
-    switch_strategy<FiniteSet>,
-    std::conditional_t<
-        is_contiguous_finite_set_v<FiniteSet> && (FiniteSet::value.size() > 10),
-        jump_table_strategy<FiniteSet>,
-        std::conditional_t<
-            (FiniteSet::value.size() > 5),
-            binary_search_strategy<FiniteSet>,
-            sequential_search_strategy<FiniteSet>
-        >
-    >
->;
+struct default_strategy;
+
+template <class FiniteSet>
+using default_strategy_t = typename default_strategy<FiniteSet>::type;
 
 // +----------------+
 // | Implementation |
@@ -149,6 +152,7 @@ namespace detail {
     
     template <class T>
     constexpr auto make_type() {
+        static_assert(is_integer_type_v<T>);
         if constexpr (std::is_enum_v<T>) {
             return std::underlying_type_t<T>{};
         }
@@ -156,15 +160,8 @@ namespace detail {
             return T{};
         }
     }
-
     template <class T>
-    struct integer_type {
-        static_assert(is_integer_type_v<T>);
-
-        using type = decltype(make_type<T>());
-    };
-    template <class T>
-    using integer_type_t = typename integer_type<T>::type;
+    using integer_type_t = decltype(make_type<T>());
 
     template <class ValueT, auto IntFirst, size_t...Is>
     constexpr auto make_contiguous_array(std::index_sequence<Is...>) noexcept {
@@ -188,9 +185,9 @@ constexpr auto make_contiguous_array() noexcept {
 
 // Workaround for MSVC
 template <class T>
-constexpr bool is_finite_set_v<T, std::enable_if_t<
-    true//(T::value.size() >= 1)
->> = T::value.size() >= 1;
+struct is_finite_set {
+    static constexpr auto value = T::value.size() >= 1;
+};
 
 namespace detail {
     template <class FiniteSet, size_t...Is>
@@ -198,17 +195,20 @@ namespace detail {
         constexpr auto first = std::get<0>(FiniteSet::value);
 
         using int_t = detail::integer_type_t<decltype(first)>;
+
         constexpr auto i_first = static_cast<int_t>(first);
 
+        // set[0] == set[i] - i
         return ((i_first == static_cast<int_t>(std::get<Is>(FiniteSet::value)) - static_cast<int_t>(Is)) && ...);
     }
 }
 
 template <class T>
-constexpr bool is_contiguous_finite_set_v<T, std::enable_if_t<
-    is_finite_set_v<T> &&
-    detail::is_integer_type_v<decltype(T::value)::template value_type>
->> = detail::is_contiguous_finite_set<T>(std::make_index_sequence<T::value.size()>{});
+struct is_contiguous_finite_set {
+    static constexpr auto value = is_finite_set_v<T> &&
+        detail::is_integer_type_v<typename std::remove_const_t<decltype(T::value)>::value_type> && 
+        detail::is_contiguous_finite_set<T>(std::make_index_sequence<T::value.size()>{});
+};
 
 // __________
 // Strategies
@@ -236,9 +236,9 @@ struct jump_table_strategy {
     static_assert(is_contiguous_finite_set_v<FiniteSet>);
 
     template <class T, class F>
-    decltype(auto) operator()(T&& value, F&& f) const {
+    decltype(auto) operator()(T && value, F && f) const {
         using sequence_type = std::make_index_sequence<FiniteSet::value.size()>;
-        constexpr auto jump_table = detail::make_jump_table<FiniteSet, F&&>(sequence_type{});
+        constexpr auto jump_table = detail::make_jump_table<FiniteSet, F &&>(sequence_type{});
 
         using int_t = detail::integer_type_t<detail::remove_cvref_t<T>>;
         constexpr auto offset = static_cast<int_t>(std::get<0>(FiniteSet::value));
@@ -262,7 +262,7 @@ namespace detail {
     template <class FiniteSet>
     struct switch_dispatcher<FiniteSet, 1> {
         template <class T, class F>
-        decltype(auto) operator()(T&&, F&& f) const {
+        decltype(auto) operator()(T &&, F && f) const {
             return DYD_PP_FWD(f)(value_tag<std::get<0>(FiniteSet::value)>{});
         }
     };
@@ -273,7 +273,7 @@ struct switch_strategy {
     static_assert(is_finite_set_v<FiniteSet>);
 
     template <class T, class F>
-    decltype(auto) operator()(T&& value, F&& f) const {
+    decltype(auto) operator()(T && value, F && f) const {
         static_assert(is_available_strategy_v<switch_strategy>);
 
         using dispatcher = detail::switch_dispatcher<FiniteSet, FiniteSet::value.size()>;
@@ -287,11 +287,28 @@ struct sequential_search_strategy {};
 template <class FiniteSet>
 struct binary_search_strategy {};
 
+template <class FiniteSet>
+struct  default_strategy {
+    using type = std::conditional_t<
+        is_available_strategy_v<switch_strategy<FiniteSet>>,
+        switch_strategy<FiniteSet>,
+        std::conditional_t<
+            is_contiguous_finite_set_v<FiniteSet> && (FiniteSet::value.size() > 1),
+            jump_table_strategy<FiniteSet>,
+            std::conditional_t<
+                (FiniteSet::value.size() > 5),
+                binary_search_strategy<FiniteSet>,
+                sequential_search_strategy<FiniteSet>
+            >
+        >
+    >;
+};
+
 // ________
 // Dispatch
 
 template <class T, class F>
-decltype(auto) dispatch(T&& value, F&& f) {
+decltype(auto) dispatch(T && value, F && f) {
     using set_type = finite_set<detail::remove_cvref_t<T>>;
     static_assert(is_finite_set_v<set_type>);
 
@@ -301,28 +318,30 @@ decltype(auto) dispatch(T&& value, F&& f) {
 
 namespace detail {
     template <class RetT, class T>
-    constexpr decltype(auto) move_if_rvalue(T&& value) noexcept {
+    constexpr decltype(auto) move_if_rvalue(T && value) noexcept {
         static_assert(std::is_reference_v<RetT>);
         using value_type = std::remove_reference_t<T>;
         using ref_type   = std::conditional_t<std::is_rvalue_reference_v<RetT>,
-                           value_type&&, value_type&>;
+                           value_type &&, value_type &>;
 
         return static_cast<ref_type>(value);
     }
 
     template <class Variant, class F>
-    decltype(auto) dispatch_variant(Variant&& v, F&& f) {
+    decltype(auto) dispatch_variant(Variant && v, F && f) {
         using variant_type  = std::remove_reference_t<Variant>;
         using set_type      = contiguous_array_t<size_t{0}, std::variant_size_v<variant_type> - 1>;
         using strategy_type = default_strategy_t<set_type>;
 
+        static_assert(is_contiguous_finite_set_v<set_type>);
+
         return strategy_type{}(v.index(), [&] (auto tag) {
             constexpr auto index = decltype(tag)::value;
             using value_type = std::variant_alternative_t<index, variant_type>;
-            using ref_type   = std::conditional_t<std::is_const_v<variant_type>, value_type const&, value_type&>;
+            using ref_type   = std::conditional_t<std::is_const_v<variant_type>, value_type const&, value_type &>;
             
-            auto&& ref = reinterpret_cast<ref_type>(v);
-            return DYD_PP_FWD(f)(move_if_rvalue<Variant&&>(ref));
+            auto & ref = reinterpret_cast<ref_type>(v);
+            return DYD_PP_FWD(f)(move_if_rvalue<Variant &&>(ref));
         });
     }
 }
@@ -402,56 +421,55 @@ decltype(auto) dispatch(std::variant<Ts...> && v, F && f) {
 #define DYD_PP_CASE(nb, x) \
     case std::get<nb>(FiniteSet::value): return DYD_PP_FWD(f)(value_tag<std::get<nb>(FiniteSet::value)>{});
 
-#define DYD_MAKE_SWITCH_1(nb) \
-namespace dyd::detail { \
-    template <class FiniteSet> \
-    struct switch_dispatcher<FiniteSet, nb> { \
-        template <class T, class F> \
-        decltype(auto) operator()(T&& value, F&& f) const { \
-            switch (value) { \
-                DYD_PP_MAP(DYD_PP_CASE, DYD_PP_REP1(nb, x)) \
+#define DYD_PP_SWITCH_BEGIN(nb) \
+    namespace dyd::detail { \
+        template <class FiniteSet> \
+        struct switch_dispatcher<FiniteSet, nb> { \
+            template <class T, class F> \
+            decltype(auto) operator()(T && value, F && f) const { \
+                switch (value) {
+
+#define DYD_PP_SWITCH_END() \
             } \
             DYD_PP_UNREACHABLE(); \
         } \
     }; \
 } struct dyd_force_semicolon_
 
-#define DYD_MAKE_SWITCH_2(tens, ones) \
-namespace dyd::detail { \
-    template <class FiniteSet> \
-    struct switch_dispatcher<FiniteSet, tens##ones> { \
-        template <class T, class F> \
-        decltype(auto) operator()(T&& value, F&& f) const { \
-            switch (value) { \
-                DYD_PP_MAP(DYD_PP_CASE, DYD_PP_REP2(tens, ones, x)) \
-            } \
-            DYD_PP_UNREACHABLE(); \
-        } \
-    }; \
-} struct dyd_force_semicolon_
+#define DYD_PP_MAKE_SWITCH_1(nb) \
+    DYD_PP_SWITCH_BEGIN(nb) \
+    DYD_PP_MAP(DYD_PP_CASE, DYD_PP_REP1(nb, x)) \
+    DYD_PP_SWITCH_END()
 
-#define DYD_MAKE_SWITCH_3(hundreds, tens, ones) \
-namespace dyd::detail { \
-    template <class FiniteSet> \
-    struct switch_dispatcher<FiniteSet, hundreds##tens##ones> { \
-        template <class T, class F> \
-        decltype(auto) operator()(T&& value, F&& f) const { \
-            switch (value) { \
-                DYD_PP_MAP(DYD_PP_CASE, DYD_PP_REP3(hundreds, tens, ones, x)) \
-            } \
-            DYD_PP_UNREACHABLE(); \
-        } \
-    }; \
-} struct dyd_force_semicolon_
+#define DYD_PP_MAKE_SWITCH_2(tens, ones) \
+    DYD_PP_SWITCH_BEGIN(10 * tens + ones) \
+    DYD_PP_MAP(DYD_PP_CASE, DYD_PP_REP2(tens, ones, x)) \
+    DYD_PP_SWITCH_END()
+
+#define DYD_PP_MAKE_SWITCH_3(hundreds, tens, ones) \
+    DYD_PP_SWITCH_BEGIN(100 * hundreds + 10 * tens + ones) \
+    DYD_PP_MAP(DYD_PP_CASE, DYD_PP_REP3(hundreds, tens, ones, x)) \
+    DYD_PP_SWITCH_END()
+
+#define DYD_PP_GET_SWITCH(_1, _2, _3, fn, ...) fn
+
+// Generates a switch that handle the given number (until 999) of
+// values in the finite set the possible values.
+// Digits are separated by commas.
+#define DYD_MAKE_SWITCH(...) DYD_PP_GET_SWITCH( \
+    __VA_ARGS__, \
+    DYD_PP_MAKE_SWITCH_3, \
+    DYD_PP_MAKE_SWITCH_2, \
+    DYD_PP_MAKE_SWITCH_1)(__VA_ARGS__)
 
 } // ::dyd
 
-DYD_MAKE_SWITCH_1(2);
-DYD_MAKE_SWITCH_1(3);
-DYD_MAKE_SWITCH_1(4);
-DYD_MAKE_SWITCH_1(5);
-DYD_MAKE_SWITCH_1(6);
-DYD_MAKE_SWITCH_1(7);
-DYD_MAKE_SWITCH_1(8);
-DYD_MAKE_SWITCH_1(9);
-DYD_MAKE_SWITCH_2(1,0);
+DYD_MAKE_SWITCH(2);
+DYD_MAKE_SWITCH(3);
+DYD_MAKE_SWITCH(4);
+DYD_MAKE_SWITCH(5);
+DYD_MAKE_SWITCH(6);
+DYD_MAKE_SWITCH(7);
+DYD_MAKE_SWITCH(8);
+DYD_MAKE_SWITCH(9);
+DYD_MAKE_SWITCH(1,0);
