@@ -2,8 +2,9 @@
 // Implements optimized dynamic dispatch where the possible states are known
 // at compile-time (like for std::variant).
 
+#pragma once
+
 #include <array>
-#include <utility>
 #include <variant>
 
 namespace dyd {
@@ -87,9 +88,10 @@ struct switch_strategy;
 // values in the finite set the possible values.
 // Digits are separated by commas.
 // Must be used in the global namespace.
+// Workaround : multiples of ten must pas 'ten' separately.
 // Exemple : DYD_MAKE_SWITCH(4, 2) generates a switch for sets of
 // 42 values.
-#define DYD_MAKE_SWITCH(...)
+// #define DYD_MAKE_SWITCH(digits...)
 
 // O(1) algorithm. Prevents inlining on most compilers.
 // Expands to :
@@ -472,4 +474,5 @@ DYD_MAKE_SWITCH(6);
 DYD_MAKE_SWITCH(7);
 DYD_MAKE_SWITCH(8);
 DYD_MAKE_SWITCH(9);
-DYD_MAKE_SWITCH(1,0);
+DYD_MAKE_SWITCH(10);
+DYD_MAKE_SWITCH(1,1);

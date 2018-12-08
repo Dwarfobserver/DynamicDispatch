@@ -1,15 +1,9 @@
 
 switch strategy : requires integer type (integrals or enums)
-
 sequential search
-
 binary search
 binary search strategy : requires ordered set
-
 is ordered finite set
-
 add 'is_available_strategy' checks
-
 is finite set : check that values are unique 
-
 add way to pass value at compile-time (for non-template params)
