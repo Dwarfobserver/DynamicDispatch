@@ -5,3 +5,6 @@ binary search
 add way to pass value at compile-time (for non-template params)
 add handler for unknown values (unreachable, throw, nothing, ...)
 optional expected value
+
+Improve benchmark :
+http://quick-bench.com/9r1Ng4aFD3gOpBXHop6mYpRVeLY

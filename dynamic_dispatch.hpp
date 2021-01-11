@@ -1,9 +1,10 @@
 
+#pragma once
+
 // Implements optimized dynamic dispatch where the possible values are known
 // at compile-time (like for std::variant through it's index).
 
-#pragma once
-
+#include <string>
 #include <array>
 #include <variant>
 
